@@ -41,8 +41,8 @@ The prompt is passed to the process via **stdin** — never as a shell argument.
 ## Manual control
 
 ```bash
-ddev cli-relay-start   # start without restarting DDEV
-ddev cli-relay-stop    # stop the relay
+ddev cli-relay:start   # start without restarting DDEV
+ddev cli-relay:stop    # stop the relay
 ```
 
 ## Configuration

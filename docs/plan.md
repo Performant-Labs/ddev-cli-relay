@@ -36,8 +36,8 @@ Files live under `.ddev/` in the repo. `install.yaml` lists them with `.ddev/`-p
 │   │   ├── start.sh                <- start relay in background
 │   │   └── stop.sh                 <- stop relay by PID
 │   └── commands/host/
-│       ├── cli-relay-start         <- ddev cli-relay-start
-│       └── cli-relay-stop          <- ddev cli-relay-stop
+│       ├── cli-relay-start         <- ddev cli-relay:start
+│       └── cli-relay-stop          <- ddev cli-relay:stop
 └── README.md
 ```
 
@@ -119,7 +119,7 @@ Start/stop scripts for the relay. Use `nohup` to run the relay in the background
 
 ### `.ddev/commands/host/cli-relay-start` / `cli-relay-stop`
 
-Manual control commands. Allow developers to run `ddev cli-relay-start` and `ddev cli-relay-stop` without restarting the full DDEV environment.
+Manual control commands. Allow developers to run `ddev cli-relay:start` and `ddev cli-relay:stop` without restarting the full DDEV environment.
 
 ---
 
@@ -173,9 +173,9 @@ ddev exec curl -s -X POST http://host.docker.internal:8765/execute \
 # Expect: {"stdout":"Hello! ...","stderr":"","exit_code":0}
 
 # 6. Manual stop/start
-ddev cli-relay-stop
+ddev cli-relay:stop
 curl http://localhost:8765/health        # should fail (connection refused)
-ddev cli-relay-start
+ddev cli-relay:start
 curl http://localhost:8765/health        # should succeed
 ```
 

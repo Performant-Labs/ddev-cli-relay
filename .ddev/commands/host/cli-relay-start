@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #ddev-generated
 ## Description: Start the CLI Relay server on the host
-## Usage: cli-relay-start
-## Example: "ddev cli-relay-start"
+## Usage: cli-relay:start
+## Example: "ddev cli-relay:start"
 
 "${DDEV_APPROOT}/.ddev/cli-relay/start.sh"
