@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#ddev-generated
+## Description: Stop the CLI Relay server on the host
+## Usage: cli-relay-stop
+## Example: "ddev cli-relay-stop"
+
+"${DDEV_APPROOT}/.ddev/cli-relay/stop.sh"

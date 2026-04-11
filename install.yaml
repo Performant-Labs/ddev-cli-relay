@@ -1,0 +1,17 @@
+name: cli-relay
+ddev_version_constraint: '>= v1.24.0'
+
+project_files:
+  - .ddev/config.cli-relay.yaml
+  - .ddev/cli-relay/relay.py
+  - .ddev/cli-relay/start.sh
+  - .ddev/cli-relay/stop.sh
+  - .ddev/commands/host/cli-relay-start
+  - .ddev/commands/host/cli-relay-stop
+
+post_install_actions:
+  - chmod +x .ddev/cli-relay/relay.py
+  - chmod +x .ddev/cli-relay/start.sh
+  - chmod +x .ddev/cli-relay/stop.sh
+  - chmod +x .ddev/commands/host/cli-relay-start
+  - chmod +x .ddev/commands/host/cli-relay-stop
