@@ -3,6 +3,7 @@ ddev_version_constraint: '>= v1.24.0'
 
 project_files:
   - .ddev/config.cli-relay.yaml
+  - .ddev/docker-compose.cli-relay-proxy.yaml
   - .ddev/cli-relay/relay.py
   - .ddev/cli-relay/start.sh
   - .ddev/cli-relay/stop.sh
