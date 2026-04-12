@@ -10,17 +10,20 @@ Returns { "stdout": "...", "stderr": "...", "exit_code": 0 } as JSON.
 
 GET /health returns { "status": "ok", "port": <PORT> }.
 
-Listens on 0.0.0.0 so host.docker.internal can reach it from inside a container.
+Can listen on TCP and/or a Unix domain socket, depending on environment.
 Port defaults to 8765; set AI_RELAY_PORT env var to override.
+Set AI_RELAY_SOCKET to bind a Unix socket instead of TCP.
 """
 
 import http.server
 import json
 import os
+import socketserver
 import subprocess
 import sys
 
 PORT = int(os.environ.get('AI_RELAY_PORT', 8765))
+SOCKET_PATH = os.environ.get('AI_RELAY_SOCKET', '').strip()
 
 
 class RelayHandler(http.server.BaseHTTPRequestHandler):
@@ -82,10 +85,38 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {'stdout': '', 'stderr': str(exc), 'exit_code': 1})
 
 
-if __name__ == '__main__':
-    server = http.server.HTTPServer(('0.0.0.0', PORT), RelayHandler)
+class ThreadingUnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def server_bind(self):
+        self.server_name = 'localhost'
+        self.server_port = 0
+        super().server_bind()
+
+
+def serve_tcp():
+    server = http.server.ThreadingHTTPServer(('0.0.0.0', PORT), RelayHandler)
     print(f'CLI Relay listening on 0.0.0.0:{PORT}', flush=True)
+    return server
+
+
+def serve_unix():
+    if os.path.exists(SOCKET_PATH):
+        os.unlink(SOCKET_PATH)
+    server = ThreadingUnixHTTPServer(SOCKET_PATH, RelayHandler)
+    os.chmod(SOCKET_PATH, 0o666)
+    print(f'CLI Relay listening on unix://{SOCKET_PATH}', flush=True)
+    return server
+
+
+if __name__ == '__main__':
+    server = serve_unix() if SOCKET_PATH else serve_tcp()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        server.server_close()
+        if SOCKET_PATH and os.path.exists(SOCKET_PATH):
+            os.unlink(SOCKET_PATH)

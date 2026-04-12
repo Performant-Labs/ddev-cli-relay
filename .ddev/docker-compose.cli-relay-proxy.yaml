@@ -1,0 +1,18 @@
+#ddev-generated
+# Socat sidecar: bridges TCP:8765 inside the Docker network to the Unix socket
+# on the host. Required on Linux where host.docker.internal is unreachable from
+# custom Docker networks due to iptables filtering.
+services:
+  cli-relay-proxy:
+    image: alpine/socat
+    container_name: ddev-${DDEV_SITENAME}-cli-relay-proxy
+    command:
+      - "TCP-LISTEN:8765,fork,reuseaddr"
+      - "UNIX-CONNECT:/mnt/ddev_config/cli-relay/relay.sock"
+    expose:
+      - "8765"
+    labels:
+      com.ddev.site-name: ${DDEV_SITENAME}
+      com.ddev.approot: ${DDEV_APPROOT}
+    volumes:
+      - ".:/mnt/ddev_config"
