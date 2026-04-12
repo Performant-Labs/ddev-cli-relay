@@ -7,13 +7,23 @@ A DDEV add-on that starts a lightweight HTTP relay server on the **host machine*
 
 ## Usage
 
-Once installed, the relay is available inside the container at `http://host.docker.internal:8765`.
+Once installed, the relay is available inside the container:
+
+- **macOS:** `http://host.docker.internal:8765` (Docker Desktop routes this automatically)
+- **Linux:** `http://cli-relay-proxy:8765` (via the socat sidecar — see [Linux support](#linux-support) below)
 
 **Check the relay is running:**
 ```bash
-# From inside the container
+# From inside the container (Linux)
+curl http://cli-relay-proxy:8765/health
+
+# From inside the container (macOS)
 curl http://host.docker.internal:8765/health
-# {"status":"ok","port":8765}
+
+# From the host
+curl http://localhost:8765/health
+
+# All return: {"status":"ok","port":8765}
 ```
 
 **Execute a CLI tool from inside the container:**
@@ -55,11 +65,26 @@ ddev add-on get Performant-Labs/ddev-cli-relay
 ddev restart
 ```
 
+## Linux support
+
+On Linux, Docker runs natively (no VM), and `host.docker.internal` often cannot reach host-bound ports due to iptables filtering on Docker's bridge networks. The addon works around this automatically:
+
+1. The relay starts **two** listeners on the host: TCP on `0.0.0.0:8765` (for host-side testing) and a Unix socket at `.ddev/cli-relay/relay.sock`
+2. A lightweight `alpine/socat` sidecar container bridges `TCP:8765` to the Unix socket via the shared `.ddev/` volume mount
+3. Containers reach the relay at `http://cli-relay-proxy:8765` — pure container-to-container, no host networking required
+
+For `ai_provider_cli`, set the relay URL to the sidecar:
+```bash
+drush config:set ai_provider_cli.settings bridge.relay_url 'http://cli-relay-proxy:8765' -y
+```
+
+macOS users do not need to change anything — `host.docker.internal` continues to work as before.
+
 ## Configuration
 
 | Environment variable | Default | Description |
 |---|---|---|
-| `AI_RELAY_PORT` | `8765` | Port the relay listens on |
+| `AI_RELAY_PORT` | `8765` | Port the relay listens on (host TCP and sidecar) |
 
 Export `AI_RELAY_PORT` in your shell profile before running `ddev start` to use a different port.
 
