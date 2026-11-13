@@ -111,7 +111,9 @@ Defines two `exec-host` lifecycle hooks:
 
 The relay server. Single-threaded Python 3 HTTP server (stdlib `http.server`). Handles one request at a time. Uses `subprocess.run()` with `capture_output=True` — prompt is sent via `input=` (stdin), never passed as a shell argument.
 
-Listens on `0.0.0.0` so `host.docker.internal` (the Docker-to-host routing address) can reach it from inside a container. Port defaults to `8765`, configurable via `AI_RELAY_PORT` env var.
+Listens on `0.0.0.0` so `host.docker.internal` (the Docker-to-host routing address) can reach it from inside a container.
+
+> **Superseded** by [ADR 0001](adr/0001-relay-access-control.md): the relay now binds to loopback (macOS) or the DDEV network gateway (Linux), requires a per-project token, and only runs allowlisted binaries. Files now live at the repository root (standard add-on layout), not under `.ddev/`. Port defaults to `8765`, configurable via `AI_RELAY_PORT` env var.
 
 ### `.ddev/cli-relay/start.sh` / `stop.sh`
 

@@ -1,0 +1,4 @@
+#ddev-generated
+# The relay's shared secret. Never commit it.
+token
+token.tmp
