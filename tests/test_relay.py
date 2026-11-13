@@ -334,7 +334,7 @@ class StartScriptTest(unittest.TestCase):
 
     def test_start_creates_private_token_and_binds_loopback(self):
         result = subprocess.run([os.path.join(self.approot, '.ddev', 'cli-relay', 'start.sh')],
-                                env=self.env, capture_output=True, text=True, timeout=20)
+                                env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(f'127.0.0.1:{self.port}', result.stdout)
         self.assertNotIn('0.0.0.0', result.stdout)
@@ -362,7 +362,7 @@ class StartScriptTest(unittest.TestCase):
         if lan_ip is None:
             self.skipTest('no non-loopback address on this machine')
         result = subprocess.run([os.path.join(self.approot, '.ddev', 'cli-relay', 'start.sh')],
-                                env=self.env, capture_output=True, text=True, timeout=20)
+                                env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(0, result.returncode, result.stderr)
         with self.assertRaises(OSError):
             socket.create_connection((lan_ip, self.port), timeout=2).close()

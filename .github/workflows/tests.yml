@@ -9,8 +9,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python: ['3.9', '3.13']
+        include:
+          # macOS ships Python 3.9 as /usr/bin/python3, which start.sh may use.
+          - { os: macos-latest, python: '3.9' }
+          - { os: macos-latest, python: '3.13' }
+          # Ubuntu runner images no longer offer 3.9.
+          - { os: ubuntu-latest, python: '3.10' }
+          - { os: ubuntu-latest, python: '3.13' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

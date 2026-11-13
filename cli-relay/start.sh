@@ -77,23 +77,34 @@ echo "$PID" > "$PIDFILE"
 
 # Confirm that this project's relay is the one answering on the port. A port
 # already used by another project's relay would otherwise look like success.
-EXPECTED_ID="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1]).read().strip().encode()).hexdigest()[:12])' "$TOKEN_FILE")"
-for _ in $(seq 1 50); do
-  if ! kill -0 "$PID" 2>/dev/null; then
-    break
-  fi
-  if python3 - "$BIND" "$PORT" "$EXPECTED_ID" <<'PY' 2>/dev/null
-import json, sys, urllib.request
-host, port, expected = sys.argv[1:4]
-with urllib.request.urlopen(f'http://{host}:{port}/health', timeout=1) as r:
-    sys.exit(0 if json.load(r).get('token_id') == expected else 1)
+# http.client is used rather than urllib so system proxy settings are ignored.
+if python3 - "$BIND" "$PORT" "$TOKEN_FILE" "$PID" <<'PY'
+import hashlib, http.client, json, os, sys, time
+host, port, token_file, pid = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+with open(token_file) as fh:
+    expected = hashlib.sha256(fh.read().strip().encode()).hexdigest()[:12]
+deadline = time.time() + 10
+while time.time() < deadline:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        sys.exit(1)
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=1)
+        conn.request('GET', '/health')
+        body = json.loads(conn.getresponse().read() or b'{}')
+        conn.close()
+        if body.get('token_id') == expected:
+            sys.exit(0)
+    except (OSError, ValueError):
+        pass
+    time.sleep(0.1)
+sys.exit(1)
 PY
-  then
-    echo "CLI Relay started on ${BIND}:${PORT} (PID $PID, log: $LOGFILE)"
-    exit 0
-  fi
-  sleep 0.1
-done
+then
+  echo "CLI Relay started on ${BIND}:${PORT} (PID $PID, log: $LOGFILE)"
+  exit 0
+fi
 
 kill "$PID" 2>/dev/null
 rm -f "$PIDFILE"
