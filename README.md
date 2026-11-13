@@ -51,7 +51,7 @@ CLI tools like `claude`, `codex`, and `gemini-cli` use browser-based OAuth authe
 ## Requirements
 
 - DDEV >= v1.24.0
-- Python 3 (pre-installed on macOS and most Linux distributions)
+- Python 3.9 or newer, as `python3` on the host `PATH` (macOS ships 3.9 as `/usr/bin/python3`; tested up to 3.14)
 
 ## Installation
 

@@ -16,9 +16,13 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   exit 0
 fi
 
-# Require python3.
+# Require Python 3.9 or newer (3.9 is macOS's /usr/bin/python3).
 if ! command -v python3 &>/dev/null; then
-  echo "ERROR: python3 is not installed. CLI Relay requires Python 3." >&2
+  echo "ERROR: python3 is not installed. CLI Relay requires Python 3.9 or newer." >&2
+  exit 1
+fi
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
+  echo "ERROR: CLI Relay requires Python 3.9 or newer; python3 on PATH is $(python3 --version 2>&1)." >&2
   exit 1
 fi
 
