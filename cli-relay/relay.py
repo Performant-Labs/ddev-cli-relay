@@ -38,6 +38,7 @@ import json
 import os
 import shutil
 import signal
+import socketserver
 import subprocess
 import sys
 
@@ -261,6 +262,21 @@ def make_handler(token: str, resolved: dict[str, str], port: int):
     return RelayHandler
 
 
+class RelayServer(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer without the reverse-DNS lookup on bind.
+
+    HTTPServer.server_bind() calls socket.getfqdn(), which can stall for many
+    seconds on macOS when DNS has no answer for the bind address. The relay
+    never uses the server name, so skip the lookup.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
+
 def make_server(bind: str, port: int, token: str, allowed: list[str],
                 path_value: str | None = None):
     """Builds the server. Allowed binaries are resolved here, once."""
@@ -269,7 +285,7 @@ def make_server(bind: str, port: int, token: str, allowed: list[str],
     if path_value is None:
         path_value = os.environ.get('PATH')
     resolved = resolve_allowlist(allowed, path_value)
-    server = http.server.ThreadingHTTPServer((bind, port), make_handler(token, resolved, port))
+    server = RelayServer((bind, port), make_handler(token, resolved, port))
     server.daemon_threads = True
     server.resolved = resolved
     return server

@@ -253,6 +253,12 @@ class RelayServerTest(unittest.TestCase):
 
 class RelayUnitTest(unittest.TestCase):
 
+    def test_bind_does_not_do_a_reverse_dns_lookup(self):
+        import unittest.mock
+        with unittest.mock.patch('socket.getfqdn', side_effect=AssertionError('getfqdn called')):
+            server = relay.make_server('127.0.0.1', 0, TOKEN, [])
+        server.server_close()
+
     def test_server_refuses_to_start_without_token(self):
         with self.assertRaises(ValueError):
             relay.make_server('127.0.0.1', 0, '', ['claude'])
