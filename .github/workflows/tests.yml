@@ -9,13 +9,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the minimum because macOS ships it as /usr/bin/python3, so
-        # it is tested there. The OS-specific code (start.sh's bind address)
-        # depends on the OS, not the Python version, so Linux runs only the
-        # newest stable release. start.sh runs whichever python3 is first on
-        # PATH, which setup-python sets to the matrix version.
+        # Oldest supported (3.10) and newest stable Python. The OS-specific
+        # code (start.sh's bind address) depends on the OS, not the Python
+        # version, so Linux runs only the newest. start.sh runs whichever
+        # python3 is first on PATH, which setup-python sets to the matrix
+        # version.
         include:
-          - { os: macos-latest, python: '3.9' }
+          - { os: macos-latest, python: '3.10' }
           - { os: macos-latest, python: '3.14' }
           - { os: ubuntu-latest, python: '3.14' }
     runs-on: ${{ matrix.os }}

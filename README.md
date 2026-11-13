@@ -51,7 +51,7 @@ CLI tools like `claude`, `codex`, and `gemini-cli` use browser-based OAuth authe
 ## Requirements
 
 - DDEV >= v1.24.0
-- Python 3.9 or newer, as `python3` on the host `PATH` (macOS ships 3.9 as `/usr/bin/python3`; tested up to 3.14)
+- Python 3.10 or newer, as `python3` on the host `PATH` (tested up to 3.14). macOS's `/usr/bin/python3` is 3.9, which is too old: install a newer one (`brew install python`) and make sure it comes first on `PATH`
 
 ## Installation
 
@@ -189,7 +189,7 @@ Why it is set up this way: [ADR 0001](docs/adr/0001-relay-access-control.md).
 
 Pull requests are welcome. For significant changes please open an issue first.
 
-Run the tests with `python3 -m unittest discover -s tests -v` (Python 3.9+, no dependencies).
+Run the tests with `python3 -m unittest discover -s tests -v` (Python 3.10+, no dependencies).
 
 ## License
 

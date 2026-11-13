@@ -401,15 +401,15 @@ class StartScriptTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, shim_dir)
         shim = os.path.join(shim_dir, 'python3')
         with open(shim, 'w') as fh:
-            # Behaves like Python 3.8: fails the version check.
-            fh.write('#!/bin/sh\n[ "$1" = --version ] && echo "Python 3.8.18" && exit 0\nexit 1\n')
+            # Behaves like macOS's Python 3.9: fails the version check.
+            fh.write('#!/bin/sh\n[ "$1" = --version ] && echo "Python 3.9.6" && exit 0\nexit 1\n')
         os.chmod(shim, 0o755)
         env = dict(self.env, PATH=shim_dir + os.pathsep + self.env['PATH'])
         result = subprocess.run([os.path.join(self.approot, '.ddev', 'cli-relay', 'start.sh')],
                                 env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(1, result.returncode, result.stdout)
-        self.assertIn('requires Python 3.9 or newer', result.stderr)
-        self.assertIn('3.8.18', result.stderr)
+        self.assertIn('requires Python 3.10 or newer', result.stderr)
+        self.assertIn('3.9.6', result.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.approot, '.ddev', 'cli-relay', 'token')),
                          'Nothing is set up with an unsupported Python.')
 
