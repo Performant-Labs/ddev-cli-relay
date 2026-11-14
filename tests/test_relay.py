@@ -1,5 +1,8 @@
 """Tests for the CLI relay. Run with: python3 -m unittest discover -s tests -v"""
 
+import base64
+import glob
+import hashlib
 import http.client
 import json
 import os
@@ -51,10 +54,21 @@ class RelayServerTest(unittest.TestCase):
         # Starts a long-lived grandchild, records its PID, then hangs.
         write_exe(cls.bindir, 'spawner-stub', 'sleep 30 & echo $! > "$1"; sleep 30')
         write_exe(cls.bindir, 'pwd-stub', 'pwd')
+        # Prints each argument; for arguments that are files, also their mode,
+        # their directory's mode and their content. Then echoes stdin.
+        write_exe(cls.bindir, 'files-stub',
+                  'for a in "$@"; do if [ -f "$a" ]; then '
+                  'printf "file:%s:%s:%s:%s\\n" "$a" "$(stat -c %a "$a" 2>/dev/null || stat -f %Lp "$a")" '
+                  '"$(stat -c %a "$(dirname "$a")" 2>/dev/null || stat -f %Lp "$(dirname "$a")")" "$(cat "$a")"; '
+                  'else printf "arg:%s\\n" "$a"; fi; done; cat')
+        write_exe(cls.bindir, 'slow-files-stub', 'echo "$1"; sleep 5')
+        write_exe(cls.bindir, 'sha-stub', f'{sys.executable} -c "import hashlib,sys; '
+                  'print(hashlib.sha256(open(sys.argv[1], \'rb\').read()).hexdigest())" "$1"')
         cls.marker = os.path.join(cls.tmp, 'pwned')
         cls.old_path = os.environ['PATH']
         os.environ['PATH'] = cls.bindir + os.pathsep + cls.old_path
-        allowed = ['echo-stub', 'slow-stub', 'spawner-stub', 'pwd-stub', cls.extra]
+        allowed = ['echo-stub', 'slow-stub', 'spawner-stub', 'pwd-stub', 'files-stub',
+                   'slow-files-stub', 'sha-stub', cls.extra]
         cls.server = relay.make_server('127.0.0.1', 0, TOKEN, allowed)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -97,6 +111,101 @@ class RelayServerTest(unittest.TestCase):
 
     def test_idle_connections_time_out(self):
         self.assertEqual(relay.SOCKET_TIMEOUT, self.server.RequestHandlerClass.timeout)
+
+    def test_health_reports_version_features_and_binaries(self):
+        _, data = self.request('GET', '/health', token=None)
+        self.assertEqual(relay.VERSION, data['version'])
+        self.assertIn('files', data['features'])
+        self.assertIn('echo-stub', data['binaries'])
+        self.assertTrue(all(not b.startswith('/') for b in data['binaries']))
+
+    # --- Attachments ------------------------------------------------------
+
+    @staticmethod
+    def b64(text):
+        return base64.b64encode(text.encode()).decode()
+
+    def relay_dirs(self):
+        return set(glob.glob(os.path.join(tempfile.gettempdir(), 'cli-relay-files-*')))
+
+    def test_files_are_written_and_placeholders_replaced(self):
+        status, data = self.execute({
+            'binary': 'files-stub',
+            'args': ['--dir', '{{files_dir}}', '-f', '{{file:0}}', '-f', '{{file:1}}'],
+            'prompt': 'read {{file:1}}',
+            'files': [{'name': 'a.txt', 'base64': self.b64('alpha')},
+                      {'name': 'b.txt', 'base64': self.b64('beta')}],
+        })
+        self.assertEqual(200, status, data)
+        out = data['stdout']
+        files = [line.split(':') for line in out.splitlines() if line.startswith('file:')]
+        self.assertEqual(['alpha', 'beta'], [f[4] for f in files])
+        self.assertEqual(['600', '600'], [f[2] for f in files])
+        self.assertEqual(['700', '700'], [f[3] for f in files])
+        path_a, path_b = files[0][1], files[1][1]
+        self.assertTrue(path_a.endswith('/1-a.txt'))
+        self.assertTrue(path_b.endswith('/2-b.txt'))
+        self.assertIn(f'arg:{os.path.dirname(path_a)}', out)
+        self.assertIn(f'read {path_b}', out)
+        self.assertFalse(os.path.exists(os.path.dirname(path_a)), 'The directory is removed afterwards.')
+
+    def test_binary_content_round_trips(self):
+        payload = bytes(range(256))
+        status, data = self.execute({
+            'binary': 'sha-stub',
+            'args': ['{{file:0}}'],
+            'files': [{'name': 'x.bin', 'base64': base64.b64encode(payload).decode()}],
+        })
+        self.assertEqual(200, status, data)
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), data['stdout'].strip())
+
+    def test_file_names_cannot_escape_the_directory(self):
+        status, data = self.execute({
+            'binary': 'files-stub',
+            'args': ['{{file:0}}', '{{file:1}}'],
+            'files': [{'name': '../../etc/evil.sh', 'base64': self.b64('x')},
+                      {'name': '..', 'base64': self.b64('y')}],
+        })
+        self.assertEqual(200, status)
+        paths = [line.split(':')[1] for line in data['stdout'].splitlines() if line.startswith('file:')]
+        self.assertEqual(2, len(paths))
+        self.assertTrue(paths[0].endswith('/1-evil.sh'))
+        self.assertTrue(paths[1].endswith('/2-file'))
+        self.assertEqual(1, len({os.path.dirname(p) for p in paths}))
+
+    def test_files_are_removed_after_timeout(self):
+        before = self.relay_dirs()
+        status, data = self.execute({
+            'binary': 'slow-files-stub', 'args': ['{{file:0}}'], 'timeout': 1,
+            'files': [{'name': 'a.txt', 'base64': self.b64('a')}],
+        })
+        self.assertEqual(200, status)
+        self.assertEqual(124, data['exit_code'])
+        self.assertEqual(before, self.relay_dirs())
+
+    def test_invalid_files_are_refused(self):
+        cases = [
+            ({'files': 'nope'}, 'must be a list'),
+            ({'files': [{'name': 'a'}]}, 'base64 string'),
+            ({'files': [{'name': 'a', 'base64': '***'}]}, 'not valid base64'),
+            ({'files': [{'name': 3, 'base64': ''}]}, 'name must be a string'),
+            ({'files': [{'base64': ''}] * (relay.MAX_FILES + 1)}, 'At most'),
+            ({'args': ['{{file:0}}']}, 'was not sent'),
+            ({'args': ['{{files_dir}}']}, 'no files were sent'),
+            ({'args': ['{{file:1}}'], 'files': [{'base64': ''}]}, 'was not sent'),
+        ]
+        before = self.relay_dirs()
+        for extra, message in cases:
+            with self.subTest(extra=extra):
+                status, data = self.execute(dict({'binary': 'files-stub'}, **extra))
+                self.assertEqual(400, status)
+                self.assertIn(message, data['error'])
+        self.assertEqual(before, self.relay_dirs(), 'Refused requests leave no directory behind.')
+
+    def test_requests_without_files_are_unchanged(self):
+        status, data = self.execute({'binary': 'echo-stub', 'args': ['{{literal}}'], 'prompt': 'hi'})
+        self.assertEqual(200, status)
+        self.assertIn('args:{{literal}}', data['stdout'])
 
     # --- Authentication ---------------------------------------------------
 

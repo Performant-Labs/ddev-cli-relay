@@ -87,8 +87,21 @@ either set `AI_RELAY_ALLOWED_BINARIES` or list them one per line in
 Returns `200` when the relay is running. Needs no token.
 
 ```json
-{ "status": "ok", "port": 8765, "auth": "token" }
+{
+  "status": "ok",
+  "version": "1.1.0",
+  "port": 8765,
+  "auth": "token",
+  "token_id": "3f2a9c41d0be",
+  "features": ["files"],
+  "binaries": ["claude", "codex", "llm"]
+}
 ```
+
+`token_id` is the first 12 hex characters of the token's SHA-256, so a client
+can check it reached its own project's relay without the token being revealed.
+`features` lists optional request fields the relay understands, and `binaries`
+the allowed tools it found on the host.
 
 ### `POST /execute`
 
@@ -103,7 +116,8 @@ Requests carrying an `Origin` header (i.e. from a web browser) are refused.
   "binary":  "claude",
   "args":    ["--flag", "--other-flag"],
   "prompt":  "text sent to stdin",
-  "timeout": 120
+  "timeout": 120,
+  "files":   [{ "name": "photo.png", "base64": "iVBORw0KGgo..." }]
 }
 ```
 
@@ -113,15 +127,30 @@ Requests carrying an `Origin` header (i.e. from a web browser) are refused.
 | `args` | array of strings | no | CLI flags passed to the binary |
 | `prompt` | string | no | Text written to stdin |
 | `timeout` | integer | no | Seconds before the process is killed (default `120`, max `3600`) |
+| `files` | array of objects | no | Attachments, each `{"name": "...", "base64": "..."}` (at most 20) |
+
+**Attachments.** The relay writes `files` to a new temp directory readable only
+by you, then replaces these placeholders in `args` and `prompt`:
+
+| Placeholder | Replaced with |
+|---|---|
+| `{{file:0}}`, `{{file:1}}`, … | The path of that file (numbered from 0) |
+| `{{files_dir}}` | The directory holding the files |
+
+For example, `"args": ["exec", "-i", "{{file:0}}"]` passes the first file to
+Codex. Only each name's base name is kept (other characters become `_`), and
+the relay prefixes it with the file's position, so `photo.png` becomes
+`1-photo.png`. The directory is deleted when the tool exits, including on a
+timeout. A placeholder that refers to a file that was not sent is a `400`.
 
 **Errors** (HTTP status, JSON body `{"error": "..."}`):
 
 | Status | Meaning |
 |---|---|
-| `400` | Malformed request body |
+| `400` | Malformed request body, invalid `files`, or a placeholder without its file |
 | `401` | Missing or wrong token |
 | `403` | Browser request (has `Origin`), or binary not allowed |
-| `413` | Body larger than 10 MiB |
+| `413` | Body larger than 32 MiB (about 24 MiB of attachments) |
 | `415` | Content-Type is not `application/json` |
 
 **Response:**

@@ -8,9 +8,16 @@ POST /execute with a JSON body:
 The prompt is passed to the process via stdin (never as a shell argument).
 Returns { "stdout": "...", "stderr": "...", "exit_code": 0 } as JSON.
 
-GET /health returns { "status": "ok", "port": <PORT>, "auth": "token",
-"token_id": <first 12 hex chars of sha256(token)> }, so a client can tell
-whether it reached its own project's relay.
+Optional "files": [{"name": "photo.png", "base64": "..."}] attaches files.
+The relay writes them to a new private temp directory, replaces
+"{{file:N}}" (the Nth file's path, from 0) and "{{files_dir}}" (the
+directory) in args and prompt, and deletes the directory when the tool exits.
+
+GET /health returns { "status": "ok", "version": "<VERSION>", "port": <PORT>,
+"auth": "token", "token_id": <first 12 hex chars of sha256(token)>,
+"features": ["files"], "binaries": [<allowed names found on PATH>] }, so a
+client can tell whether it reached its own project's relay, what it supports
+and which tools are installed.
 
 Every /execute request must:
   - carry "Authorization: Bearer <token>", where the token is read from the
@@ -34,18 +41,28 @@ from __future__ import annotations
 import hashlib
 import hmac
 import http.server
+import base64
+import binascii
 import json
 import os
+import re
 import shutil
 import signal
 import socketserver
 import subprocess
 import sys
+import tempfile
 
 DEFAULT_ALLOWED = (
     'claude', 'codex', 'gemini', 'gemini-cli', 'opencode', 'ollama', 'lms', 'llm',
 )
-MAX_BODY_BYTES = 10 * 1024 * 1024
+VERSION = '1.1.0'
+FEATURES = ('files',)
+# Base64 adds a third, so this allows roughly 24 MiB of attachments.
+MAX_BODY_BYTES = 32 * 1024 * 1024
+MAX_FILES = 20
+FILE_PLACEHOLDER = re.compile(r'\{\{file:(\d+)\}\}')
+DIR_PLACEHOLDER = '{{files_dir}}'
 MAX_TIMEOUT = 3600
 # Seconds a client may take to send its request (not how long a tool may run).
 SOCKET_TIMEOUT = 30
@@ -126,6 +143,72 @@ def read_token(path: str | None) -> str:
         return fh.read().strip()
 
 
+def parse_files(value) -> list[tuple[str, bytes]]:
+    """Validates the request's "files" list; raises ValueError with a reason."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError('files must be a list')
+    if len(value) > MAX_FILES:
+        raise ValueError(f'At most {MAX_FILES} files are accepted')
+    files = []
+    for index, entry in enumerate(value):
+        if not isinstance(entry, dict) or not isinstance(entry.get('base64'), str):
+            raise ValueError(f'files[{index}] must be an object with a base64 string')
+        name = entry.get('name', '')
+        if not isinstance(name, str):
+            raise ValueError(f'files[{index}].name must be a string')
+        try:
+            data = base64.b64decode(entry['base64'], validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError(f'files[{index}].base64 is not valid base64') from None
+        files.append((safe_name(name, index), data))
+    return files
+
+
+def safe_name(name: str, index: int) -> str:
+    """Returns a file name that cannot leave the temp directory.
+
+    Only the base name is kept, reduced to letters, digits, ".", "_" and "-",
+    and prefixed with the file's position so names never collide.
+    """
+    base = re.sub(r'[^A-Za-z0-9._-]', '_', os.path.basename(name.replace('\\', '/')))
+    base = base.lstrip('.') or 'file'
+    return f'{index + 1}-{base[:100]}'
+
+
+def substitute(text: str, files_dir: str | None, paths: list[str]) -> str:
+    """Replaces the file placeholders in one argument or the prompt."""
+    def file_path(match):
+        index = int(match.group(1))
+        if index >= len(paths):
+            raise ValueError(f'{{{{file:{index}}}}} refers to a file that was not sent')
+        return paths[index]
+    text = FILE_PLACEHOLDER.sub(file_path, text)
+    if DIR_PLACEHOLDER in text:
+        if files_dir is None:
+            raise ValueError('{{files_dir}} is used but no files were sent')
+        text = text.replace(DIR_PLACEHOLDER, files_dir)
+    return text
+
+
+def write_files(files: list[tuple[str, bytes]]) -> tuple[str, list[str]]:
+    """Writes the files to a new private directory; returns it and the paths."""
+    files_dir = tempfile.mkdtemp(prefix='cli-relay-files-')
+    paths = []
+    try:
+        for name, data in files:
+            path = os.path.join(files_dir, name)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'wb') as fh:
+                fh.write(data)
+            paths.append(path)
+    except OSError:
+        shutil.rmtree(files_dir, ignore_errors=True)
+        raise
+    return files_dir, paths
+
+
 def run_tool(binary: str, args: list[str], prompt: str, timeout: int) -> dict:
     """Runs one tool in its own process group and returns the relay response.
 
@@ -167,7 +250,15 @@ def run_tool(binary: str, args: list[str], prompt: str, timeout: int) -> dict:
 
 def make_handler(token: str, resolved: dict[str, str], port: int):
     expected = f'Bearer {token}'.encode('utf-8')
-    health = {'status': 'ok', 'port': port, 'auth': 'token', 'token_id': token_id(token)}
+    health = {
+        'status': 'ok',
+        'version': VERSION,
+        'port': port,
+        'auth': 'token',
+        'token_id': token_id(token),
+        'features': list(FEATURES),
+        'binaries': sorted(k for k in resolved if not os.path.isabs(k)),
+    }
 
     class RelayHandler(http.server.BaseHTTPRequestHandler):
         timeout = SOCKET_TIMEOUT
@@ -246,6 +337,11 @@ def make_handler(token: str, resolved: dict[str, str], port: int):
                 self.send_json(400, {'error': 'timeout must be an integer'})
                 return
             timeout = max(1, min(timeout, MAX_TIMEOUT))
+            try:
+                files = parse_files(params.get('files'))
+            except ValueError as exc:
+                self.send_json(400, {'error': str(exc)})
+                return
 
             requested = requested.strip()
             binary = resolve_binary(requested, resolved)
@@ -257,7 +353,27 @@ def make_handler(token: str, resolved: dict[str, str], port: int):
                 })
                 return
 
-            self.send_json(200, run_tool(binary, args, prompt, timeout))
+            files_dir = None
+            try:
+                paths: list[str] = []
+                if files:
+                    files_dir, paths = write_files(files)
+                args = [substitute(a, files_dir, paths) for a in args]
+                prompt = substitute(prompt, files_dir, paths)
+            except ValueError as exc:
+                if files_dir:
+                    shutil.rmtree(files_dir, ignore_errors=True)
+                self.send_json(400, {'error': str(exc)})
+                return
+            except OSError as exc:
+                self.send_json(500, {'error': f'Could not write attachments: {exc}'})
+                return
+            try:
+                result = run_tool(binary, args, prompt, timeout)
+            finally:
+                if files_dir:
+                    shutil.rmtree(files_dir, ignore_errors=True)
+            self.send_json(200, result)
 
     return RelayHandler
 
