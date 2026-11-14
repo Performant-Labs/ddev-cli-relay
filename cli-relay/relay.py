@@ -359,6 +359,8 @@ def make_handler(token: str, resolved: dict[str, str], port: int):
             except OSError as exc:
                 self.send_json(500, {'error': f'Could not create a working directory: {exc}'})
                 return
+            # The directory is removed before any reply is sent, so a client
+            # never sees it still on disk after its request has finished.
             try:
                 try:
                     paths = write_files(work_dir, files)
@@ -366,15 +368,14 @@ def make_handler(token: str, resolved: dict[str, str], port: int):
                     args = [substitute(a, files_dir, paths) for a in args]
                     prompt = substitute(prompt, files_dir, paths)
                 except ValueError as exc:
-                    self.send_json(400, {'error': str(exc)})
-                    return
+                    code, reply = 400, {'error': str(exc)}
                 except OSError as exc:
-                    self.send_json(500, {'error': f'Could not write attachments: {exc}'})
-                    return
-                result = run_tool(binary, args, prompt, timeout, work_dir)
+                    code, reply = 500, {'error': f'Could not write attachments: {exc}'}
+                else:
+                    code, reply = 200, run_tool(binary, args, prompt, timeout, work_dir)
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
-            self.send_json(200, result)
+            self.send_json(code, reply)
 
     return RelayHandler
 
