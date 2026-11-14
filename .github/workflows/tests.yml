@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported (3.12) and newest stable Python. The OS-specific
+        # code (start.sh's bind address) depends on the OS, not the Python
+        # version, so Linux runs only the newest. start.sh runs whichever
+        # python3 is first on PATH, which setup-python sets to the matrix
+        # version.
+        include:
+          - { os: macos-latest, python: '3.12' }
+          - { os: macos-latest, python: '3.14' }
+          - { os: ubuntu-latest, python: '3.14' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests -v

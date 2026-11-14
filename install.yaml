@@ -1,17 +1,32 @@
 name: cli-relay
 ddev_version_constraint: '>= v1.24.0'
 
+# Paths are relative to the add-on repository root and are installed into the
+# project's .ddev/ directory.
 project_files:
-  - .ddev/config.cli-relay.yaml
-  - .ddev/cli-relay/relay.py
-  - .ddev/cli-relay/start.sh
-  - .ddev/cli-relay/stop.sh
-  - .ddev/commands/host/cli-relay-start
-  - .ddev/commands/host/cli-relay-stop
+  - config.cli-relay.yaml
+  - cli-relay/relay.py
+  - cli-relay/start.sh
+  - cli-relay/stop.sh
+  - cli-relay/ensure-token.sh
+  - cli-relay/.gitignore
+  - commands/host/cli-relay-start
+  - commands/host/cli-relay-stop
 
+# Actions run from the project's .ddev/ directory.
 post_install_actions:
-  - chmod +x .ddev/cli-relay/relay.py
-  - chmod +x .ddev/cli-relay/start.sh
-  - chmod +x .ddev/cli-relay/stop.sh
-  - chmod +x .ddev/commands/host/cli-relay-start
-  - chmod +x .ddev/commands/host/cli-relay-stop
+  - chmod +x cli-relay/relay.py cli-relay/start.sh cli-relay/stop.sh cli-relay/ensure-token.sh
+  - chmod +x commands/host/cli-relay-start commands/host/cli-relay-stop
+  - cli-relay/stop.sh >/dev/null 2>&1 || true
+  # Earlier releases installed into .ddev/.ddev/ by mistake; remove those files.
+  - |
+    for f in .ddev/config.cli-relay.yaml .ddev/cli-relay/relay.py .ddev/cli-relay/start.sh \
+             .ddev/cli-relay/stop.sh .ddev/cli-relay/ensure-token.sh .ddev/cli-relay/.gitignore \
+             .ddev/commands/host/cli-relay-start .ddev/commands/host/cli-relay-stop; do
+      if [ -f "$f" ] && grep -q '#ddev-generated' "$f"; then rm -f "$f"; fi
+    done
+    rmdir .ddev/cli-relay .ddev/commands/host .ddev/commands .ddev 2>/dev/null || true
+
+removal_actions:
+  - cli-relay/stop.sh >/dev/null 2>&1 || true
+  - rm -f cli-relay/token cli-relay/token.tmp

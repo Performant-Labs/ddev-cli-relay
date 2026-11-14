@@ -1,5 +1,7 @@
 #ddev-generated
 hooks:
+  pre-start:
+    - exec-host: "${DDEV_APPROOT}/.ddev/cli-relay/ensure-token.sh"
   post-start:
     - exec-host: "${DDEV_APPROOT}/.ddev/cli-relay/start.sh"
   post-stop:
