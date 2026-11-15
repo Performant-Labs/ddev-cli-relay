@@ -8,14 +8,17 @@ POST /execute with a JSON body:
 The prompt is passed to the process via stdin (never as a shell argument).
 Returns { "stdout": "...", "stderr": "...", "exit_code": 0 } as JSON.
 
+Every tool runs in a new, empty, private temp directory (mode 700), which is
+deleted when the tool exits. Agentic tools treat their working directory as
+their workspace, so they never start out able to read the host user's files.
+
 Optional "files": [{"name": "photo.png", "base64": "..."}] attaches files.
-The relay writes them to a new private temp directory, replaces
-"{{file:N}}" (the Nth file's path, from 0) and "{{files_dir}}" (the
-directory) in args and prompt, and deletes the directory when the tool exits.
+The relay writes them into that directory, replaces "{{file:N}}" (the Nth
+file's path, from 0) and "{{files_dir}}" (the directory) in args and prompt.
 
 GET /health returns { "status": "ok", "version": "<VERSION>", "port": <PORT>,
 "auth": "token", "token_id": <first 12 hex chars of sha256(token)>,
-"features": ["files"], "binaries": [<allowed names found on PATH>] }, so a
+"features": ["files", "isolated_cwd"], "binaries": [<allowed names found on PATH>] }, so a
 client can tell whether it reached its own project's relay, what it supports
 and which tools are installed.
 
@@ -56,8 +59,8 @@ import tempfile
 DEFAULT_ALLOWED = (
     'claude', 'codex', 'gemini', 'gemini-cli', 'opencode', 'ollama', 'lms', 'llm',
 )
-VERSION = '1.1.0'
-FEATURES = ('files',)
+VERSION = '1.2.0'
+FEATURES = ('files', 'isolated_cwd')
 # Base64 adds a third, so this allows roughly 24 MiB of attachments.
 MAX_BODY_BYTES = 32 * 1024 * 1024
 MAX_FILES = 20
@@ -192,25 +195,23 @@ def substitute(text: str, files_dir: str | None, paths: list[str]) -> str:
     return text
 
 
-def write_files(files: list[tuple[str, bytes]]) -> tuple[str, list[str]]:
-    """Writes the files to a new private directory; returns it and the paths."""
-    files_dir = tempfile.mkdtemp(prefix='cli-relay-files-')
+def write_files(work_dir: str, files: list[tuple[str, bytes]]) -> list[str]:
+    """Writes the files into the request's private directory; returns the paths."""
     paths = []
-    try:
-        for name, data in files:
-            path = os.path.join(files_dir, name)
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, 'wb') as fh:
-                fh.write(data)
-            paths.append(path)
-    except OSError:
-        shutil.rmtree(files_dir, ignore_errors=True)
-        raise
-    return files_dir, paths
+    for name, data in files:
+        path = os.path.join(work_dir, name)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as fh:
+            fh.write(data)
+        paths.append(path)
+    return paths
 
 
-def run_tool(binary: str, args: list[str], prompt: str, timeout: int) -> dict:
+def run_tool(binary: str, args: list[str], prompt: str, timeout: int, cwd: str) -> dict:
     """Runs one tool in its own process group and returns the relay response.
+
+    The tool runs in cwd, the request's private directory, never in the
+    user's home directory.
 
     On timeout the whole group is killed, so helpers the tool started (node
     workers, MCP servers) do not outlive the request.
@@ -222,7 +223,7 @@ def run_tool(binary: str, args: list[str], prompt: str, timeout: int) -> dict:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=os.path.expanduser('~'),
+            cwd=cwd,
             env=env,
             start_new_session=True,
         )
@@ -353,27 +354,28 @@ def make_handler(token: str, resolved: dict[str, str], port: int):
                 })
                 return
 
-            files_dir = None
             try:
-                paths: list[str] = []
-                if files:
-                    files_dir, paths = write_files(files)
-                args = [substitute(a, files_dir, paths) for a in args]
-                prompt = substitute(prompt, files_dir, paths)
-            except ValueError as exc:
-                if files_dir:
-                    shutil.rmtree(files_dir, ignore_errors=True)
-                self.send_json(400, {'error': str(exc)})
-                return
+                work_dir = tempfile.mkdtemp(prefix='cli-relay-run-')
             except OSError as exc:
-                self.send_json(500, {'error': f'Could not write attachments: {exc}'})
+                self.send_json(500, {'error': f'Could not create a working directory: {exc}'})
                 return
+            # The directory is removed before any reply is sent, so a client
+            # never sees it still on disk after its request has finished.
             try:
-                result = run_tool(binary, args, prompt, timeout)
+                try:
+                    paths = write_files(work_dir, files)
+                    files_dir = work_dir if files else None
+                    args = [substitute(a, files_dir, paths) for a in args]
+                    prompt = substitute(prompt, files_dir, paths)
+                except ValueError as exc:
+                    code, reply = 400, {'error': str(exc)}
+                except OSError as exc:
+                    code, reply = 500, {'error': f'Could not write attachments: {exc}'}
+                else:
+                    code, reply = 200, run_tool(binary, args, prompt, timeout, work_dir)
             finally:
-                if files_dir:
-                    shutil.rmtree(files_dir, ignore_errors=True)
-            self.send_json(200, result)
+                shutil.rmtree(work_dir, ignore_errors=True)
+            self.send_json(code, reply)
 
     return RelayHandler
 

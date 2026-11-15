@@ -53,7 +53,9 @@ class RelayServerTest(unittest.TestCase):
         cls.extra = write_exe(cls.bindir, 'explicit-stub', 'echo explicit')
         # Starts a long-lived grandchild, records its PID, then hangs.
         write_exe(cls.bindir, 'spawner-stub', 'sleep 30 & echo $! > "$1"; sleep 30')
-        write_exe(cls.bindir, 'pwd-stub', 'pwd')
+        # Prints its working directory, that directory's mode and its entries.
+        write_exe(cls.bindir, 'pwd-stub',
+                  'pwd; stat -c %a . 2>/dev/null || stat -f %Lp .; ls -A')
         # Prints each argument; for arguments that are files, also their mode,
         # their directory's mode and their content. Then echoes stdin.
         write_exe(cls.bindir, 'files-stub',
@@ -116,6 +118,7 @@ class RelayServerTest(unittest.TestCase):
         _, data = self.request('GET', '/health', token=None)
         self.assertEqual(relay.VERSION, data['version'])
         self.assertIn('files', data['features'])
+        self.assertIn('isolated_cwd', data['features'])
         self.assertIn('echo-stub', data['binaries'])
         self.assertTrue(all(not b.startswith('/') for b in data['binaries']))
 
@@ -126,7 +129,7 @@ class RelayServerTest(unittest.TestCase):
         return base64.b64encode(text.encode()).decode()
 
     def relay_dirs(self):
-        return set(glob.glob(os.path.join(tempfile.gettempdir(), 'cli-relay-files-*')))
+        return set(glob.glob(os.path.join(tempfile.gettempdir(), 'cli-relay-run-*')))
 
     def test_files_are_written_and_placeholders_replaced(self):
         status, data = self.execute({
@@ -331,11 +334,31 @@ class RelayServerTest(unittest.TestCase):
         os.kill(pid, 9)
         self.fail('grandchild survived the timeout')
 
-    def test_tool_runs_in_home_directory(self):
+    def test_tool_runs_in_empty_private_directory(self):
+        before = self.relay_dirs()
         status, data = self.execute({'binary': 'pwd-stub'})
         self.assertEqual(200, status, data)
-        self.assertEqual(os.path.realpath(os.path.expanduser('~')),
-                         os.path.realpath(data['stdout'].strip()))
+        lines = data['stdout'].strip().split('\n')
+        cwd = os.path.realpath(lines[0])
+        self.assertNotEqual(os.path.realpath(os.path.expanduser('~')), cwd)
+        self.assertTrue(os.path.basename(cwd).startswith('cli-relay-run-'))
+        self.assertEqual('700', lines[1], 'Only the user can enter the directory.')
+        self.assertEqual(2, len(lines), 'The directory is empty.')
+        self.assertFalse(os.path.exists(cwd), 'The directory is removed afterwards.')
+        self.assertEqual(before, self.relay_dirs())
+
+    def test_attachments_are_in_the_working_directory(self):
+        status, data = self.execute({
+            'binary': 'pwd-stub',
+            'files': [{'name': 'a.txt', 'base64': self.b64('alpha')}],
+        })
+        self.assertEqual(200, status, data)
+        self.assertEqual(['1-a.txt'], data['stdout'].strip().split('\n')[2:])
+
+    def test_each_request_gets_its_own_directory(self):
+        first = self.execute({'binary': 'pwd-stub'})[1]['stdout'].split('\n')[0]
+        second = self.execute({'binary': 'pwd-stub'})[1]['stdout'].split('\n')[0]
+        self.assertNotEqual(first, second)
 
     # --- Input validation -------------------------------------------------
 
